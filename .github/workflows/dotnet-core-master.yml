@@ -41,7 +41,7 @@ jobs:
         repository: microting/eform-debian-service
         ref: stable
         path: eform-debian-service
-    - name: 'Preparing outer inner resource checkout'
+    - name: 'Preparing trash inspection checkout'
       uses: actions/checkout@v3
       with:
         fetch-depth: 0
@@ -130,7 +130,7 @@ jobs:
       run: |
         docker pull rabbitmq:latest
         docker run -d --hostname my-rabbit --name some-rabbit --network data -e RABBITMQ_DEFAULT_USER=admin -e RABBITMQ_DEFAULT_PASS=password rabbitmq:latest
-    - name: 'Preparing outer inner resource checkout'
+    - name: 'Preparing trash inspection checkout'
       uses: actions/checkout@v3
       with:
         fetch-depth: 0
