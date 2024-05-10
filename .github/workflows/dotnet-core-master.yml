@@ -94,8 +94,6 @@ jobs:
       run: |
         docker exec -i mariadbtest mariadb -h 127.0.0.1 -u root --password=secretpassword -e 'create database `420_SDK`'
         docker exec -i mariadbtest mariadb -h 127.0.0.1 -u root --password=secretpassword 420_SDK < main/420_SDK.sql
-    - name: Change rabbitmq hostname
-      run: docker exec -i mariadbtest mariadb -u root --password=secretpassword -e 'update 420_SDK.Settings set Value = "my-rabbit" where Name = "rabbitMqHost"'
     - name: Start the newly build Docker container
       id: docker-run
       run: docker run --name my-container --network data microtingas/trash-inspection-service-container:latest "/ConnectionString=host=mariadbtest;Database=420_SDK;user=root;password=secretpassword;port=3306;Convert Zero Datetime = true;SslMode=none;" > docker_run_log 2>&1 &

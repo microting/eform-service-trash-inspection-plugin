@@ -153,15 +153,22 @@ namespace ServiceTrashInspectionPlugin
                     _dbContextHelper = new DbContextHelper(connectionString);
 
                     startSdkCoreSqlOnly(sdkConnectionString);
+                    Console.WriteLine($"Connection string: {sdkConnectionString}");
+
+                    var rabbitmqHost = _sdkCore.GetSdkSetting(Settings.rabbitMqHost).GetAwaiter().GetResult();
+                    Console.WriteLine($"rabbitmqHost: {rabbitmqHost}");
+                    var rabbitMqUser = _sdkCore.GetSdkSetting(Settings.rabbitMqUser).GetAwaiter().GetResult();
+                    Console.WriteLine($"rabbitMqUser: {rabbitMqUser}");
+                    var rabbitMqPassword = _sdkCore.GetSdkSetting(Settings.rabbitMqPassword).GetAwaiter().GetResult();
+                    Console.WriteLine($"rabbitMqPassword: {rabbitMqPassword}");
 
                     _container = new WindsorContainer();
                     _container.Register(Component.For<DbContextHelper>().Instance(_dbContextHelper));
                     _container.Register(Component.For<eFormCore.Core>().Instance(_sdkCore));
                     _container.Install(
                         new RebusHandlerInstaller()
-                        , new RebusInstaller(connectionString, _maxParallelism, _numberOfWorkers)
+                        , new RebusInstaller(dbPrefix, connectionString, _maxParallelism, _numberOfWorkers, rabbitMqUser, rabbitMqPassword, rabbitmqHost)
                     );
-
 
                     _bus = _container.Resolve<IBus>();
                 }
@@ -172,7 +179,7 @@ namespace ServiceTrashInspectionPlugin
             {
                 Console.ForegroundColor = ConsoleColor.DarkRed;
                 Console.WriteLine("Start failed " + ex.Message);
-                throw ex;
+                throw;
             }
         }
 
@@ -216,11 +223,11 @@ namespace ServiceTrashInspectionPlugin
             throw new NotImplementedException();
         }
 
-        public void startSdkCoreSqlOnly(string sdkConnectionString)
+        private void startSdkCoreSqlOnly(string sdkConnectionString)
         {
             _sdkCore = new eFormCore.Core();
 
-            _sdkCore.StartSqlOnly(sdkConnectionString);
+            _sdkCore.StartSqlOnly(sdkConnectionString).GetAwaiter().GetResult();
         }
     }
 }
