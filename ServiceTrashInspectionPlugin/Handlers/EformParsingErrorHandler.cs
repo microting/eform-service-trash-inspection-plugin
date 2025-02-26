@@ -30,29 +30,28 @@ using Rebus.Handlers;
 using ServiceTrashInspectionPlugin.Infrastructure.Helpers;
 using ServiceTrashInspectionPlugin.Messages;
 
-namespace ServiceTrashInspectionPlugin.Handlers
-{
-    public class EformParsingErrorHandler : IHandleMessages<EformParsingError>
-    {
-        private readonly TrashInspectionPnDbContext _dbContext;
+namespace ServiceTrashInspectionPlugin.Handlers;
 
-        public EformParsingErrorHandler(DbContextHelper dbContextHelper)
-        {
-            _dbContext = dbContextHelper.GetDbContext();
-        }
+public class EformParsingErrorHandler : IHandleMessages<EformParsingError>
+{
+    private readonly TrashInspectionPnDbContext _dbContext;
+
+    public EformParsingErrorHandler(DbContextHelper dbContextHelper)
+    {
+        _dbContext = dbContextHelper.GetDbContext();
+    }
 
 #pragma warning disable 1998
-        public async Task Handle(EformParsingError message)
+    public async Task Handle(EformParsingError message)
+    {
+        TrashInspectionCase trashInspectionCase =
+            _dbContext.TrashInspectionCases.SingleOrDefault(x => x.SdkCaseId == message.CaseId.ToString());
+        if (trashInspectionCase != null)
         {
-            TrashInspectionCase trashInspectionCase =
-                _dbContext.TrashInspectionCases.SingleOrDefault(x => x.SdkCaseId == message.CaseId.ToString());
-            if (trashInspectionCase != null)
+            if (trashInspectionCase.Status < 110)
             {
-                if (trashInspectionCase.Status < 110)
-                {
-                    trashInspectionCase.Status = 110;
-                    await trashInspectionCase.Update(_dbContext);
-                }
+                trashInspectionCase.Status = 110;
+                await trashInspectionCase.Update(_dbContext);
             }
         }
     }

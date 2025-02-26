@@ -22,15 +22,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-namespace ServiceTrashInspectionPlugin.Messages
-{
-    public class EformParsedByServer
-    {
-        public int CaseId { get; protected set; }
+namespace ServiceTrashInspectionPlugin.Messages;
 
-        public EformParsedByServer(int caseId)
-        {
-            CaseId = caseId;
-        }
+public class EformParsedByServer
+{
+    public int CaseId { get; protected set; }
+
+    public EformParsedByServer(int caseId)
+    {
+        CaseId = caseId;
     }
 }

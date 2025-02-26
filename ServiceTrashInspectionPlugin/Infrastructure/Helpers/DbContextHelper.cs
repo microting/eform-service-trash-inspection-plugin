@@ -1,22 +1,21 @@
 using Microting.eFormTrashInspectionBase.Infrastructure.Data;
 using Microting.eFormTrashInspectionBase.Infrastructure.Data.Factories;
 
-namespace ServiceTrashInspectionPlugin.Infrastructure.Helpers
+namespace ServiceTrashInspectionPlugin.Infrastructure.Helpers;
+
+public class DbContextHelper
 {
-    public class DbContextHelper
+    private string ConnectionString { get;}
+
+    public DbContextHelper(string connectionString)
     {
-        private string ConnectionString { get;}
+        ConnectionString = connectionString;
+    }
 
-        public DbContextHelper(string connectionString)
-        {
-            ConnectionString = connectionString;
-        }
+    public TrashInspectionPnDbContext GetDbContext()
+    {
+        TrashInspectionPnContextFactory contextFactory = new TrashInspectionPnContextFactory();
 
-        public TrashInspectionPnDbContext GetDbContext()
-        {
-            TrashInspectionPnContextFactory contextFactory = new TrashInspectionPnContextFactory();
-
-            return contextFactory.CreateDbContext(new[] { ConnectionString });
-        }
+        return contextFactory.CreateDbContext(new[] { ConnectionString });
     }
 }

@@ -33,34 +33,33 @@ using Rebus.Handlers;
 using ServiceTrashInspectionPlugin.Infrastructure.Helpers;
 using ServiceTrashInspectionPlugin.Messages;
 
-namespace ServiceTrashInspectionPlugin.Handlers
+namespace ServiceTrashInspectionPlugin.Handlers;
+
+public class EformParsedByServerHandler : IHandleMessages<EformParsedByServer>
 {
-    public class EformParsedByServerHandler : IHandleMessages<EformParsedByServer>
+    private readonly eFormCore.Core _sdkCore;
+    private readonly TrashInspectionPnDbContext _dbContext;
+
+    public EformParsedByServerHandler(eFormCore.Core sdkCore, DbContextHelper dbContextHelper)
     {
-        private readonly eFormCore.Core _sdkCore;
-        private readonly TrashInspectionPnDbContext _dbContext;
+        _dbContext = dbContextHelper.GetDbContext();
+        _sdkCore = sdkCore;
+    }
 
-        public EformParsedByServerHandler(eFormCore.Core sdkCore, DbContextHelper dbContextHelper)
+    public async Task Handle(EformParsedByServer message)
+    {
+        await using MicrotingDbContext sdkDbContext = _sdkCore.DbContextHelper.GetDbContext();
+        Case theCase = await sdkDbContext.Cases.SingleOrDefaultAsync(x => x.MicrotingUid == message.CaseId);
+        if (theCase != null)
         {
-            _dbContext = dbContextHelper.GetDbContext();
-            _sdkCore = sdkCore;
-        }
-
-        public async Task Handle(EformParsedByServer message)
-        {
-            await using MicrotingDbContext sdkDbContext = _sdkCore.DbContextHelper.GetDbContext();
-            Case theCase = await sdkDbContext.Cases.SingleOrDefaultAsync(x => x.MicrotingUid == message.CaseId);
-            if (theCase != null)
+            TrashInspectionCase trashInspectionCase =
+                _dbContext.TrashInspectionCases.SingleOrDefault(x => x.SdkCaseId == message.CaseId.ToString());
+            if (trashInspectionCase != null)
             {
-                TrashInspectionCase trashInspectionCase =
-                    _dbContext.TrashInspectionCases.SingleOrDefault(x => x.SdkCaseId == message.CaseId.ToString());
-                if (trashInspectionCase != null)
+                if (trashInspectionCase.Status < 70)
                 {
-                    if (trashInspectionCase.Status < 70)
-                    {
-                        trashInspectionCase.Status = 70;
-                        await trashInspectionCase.Update(_dbContext);
-                    }
+                    trashInspectionCase.Status = 70;
+                    await trashInspectionCase.Update(_dbContext);
                 }
             }
         }

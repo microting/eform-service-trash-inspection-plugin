@@ -1,6 +1,6 @@
 /*
 The MIT License (MIT)
-Copyright (c) 2007 - 2019 Microting A/S
+Copyright (c) 2007 - 2025 Microting A/S
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
@@ -39,249 +39,248 @@ using CheckListValue = Microting.eForm.Infrastructure.Models.CheckListValue;
 using Field = Microting.eForm.Infrastructure.Models.Field;
 using FieldValue = Microting.eForm.Infrastructure.Models.FieldValue;
 
-namespace ServiceTrashInspectionPlugin.Handlers
+namespace ServiceTrashInspectionPlugin.Handlers;
+
+public class eFormCompletedHandler : IHandleMessages<eFormCompleted>
 {
-    public class eFormCompletedHandler : IHandleMessages<eFormCompleted>
+    private readonly eFormCore.Core _sdkCore;
+    private readonly TrashInspectionPnDbContext _dbContext;
+
+    public eFormCompletedHandler(eFormCore.Core sdkCore, DbContextHelper dbContextHelper)
     {
-        private readonly eFormCore.Core _sdkCore;
-        private readonly TrashInspectionPnDbContext _dbContext;
+        _dbContext = dbContextHelper.GetDbContext();
+        _sdkCore = sdkCore;
+    }
 
-        public eFormCompletedHandler(eFormCore.Core sdkCore, DbContextHelper dbContextHelper)
+#pragma warning disable 1998
+    public async Task Handle(eFormCompleted message)
+    {
+
+        Console.WriteLine("[DBG] TrashInspection: We got a message : " + message.caseId);
+        TrashInspectionCase trashInspectionCase =
+            _dbContext.TrashInspectionCases.SingleOrDefault(x => x.SdkCaseId == message.caseId.ToString());
+        if (trashInspectionCase != null)
         {
-            _dbContext = dbContextHelper.GetDbContext();
-            _sdkCore = sdkCore;
-        }
 
-        #pragma warning disable 1998
-        public async Task Handle(eFormCompleted message)
-        {
+            #region get case information
 
-            Console.WriteLine("[DBG] TrashInspection: We got a message : " + message.caseId);
-            TrashInspectionCase trashInspectionCase =
-                _dbContext.TrashInspectionCases.SingleOrDefault(x => x.SdkCaseId == message.caseId.ToString());
-            if (trashInspectionCase != null)
+            CaseDto caseDto = await _sdkCore.CaseLookupMUId(message.caseId);
+            await using MicrotingDbContext microtingDbContext = _sdkCore.DbContextHelper.GetDbContext();
+            var microtingUId = caseDto.MicrotingUId;
+            var microtingCheckUId = caseDto.CheckUId;
+            Language language = await microtingDbContext.Languages.SingleAsync(x => x.Name == "Danish");
+            ReplyElement theCase = await _sdkCore.CaseRead((int)microtingUId, (int)microtingCheckUId, language);
+            CheckListValue dataElement = (CheckListValue)theCase.ElementList[0];
+            bool inspectionApproved = false;
+            string approvedValue = "";
+            string comment = "";
+            Console.WriteLine("[DBG] Trying to find the field with the approval value");
+            foreach (var field in dataElement.DataItemList)
             {
-
-                #region get case information
-
-                CaseDto caseDto = await _sdkCore.CaseLookupMUId(message.caseId);
-                await using MicrotingDbContext microtingDbContext = _sdkCore.DbContextHelper.GetDbContext();
-                var microtingUId = caseDto.MicrotingUId;
-                var microtingCheckUId = caseDto.CheckUId;
-                Language language = await microtingDbContext.Languages.SingleAsync(x => x.Name == "Danish");
-                ReplyElement theCase = await _sdkCore.CaseRead((int)microtingUId, (int)microtingCheckUId, language);
-                CheckListValue dataElement = (CheckListValue)theCase.ElementList[0];
-                bool inspectionApproved = false;
-                string approvedValue = "";
-                string comment = "";
-                Console.WriteLine("[DBG] Trying to find the field with the approval value");
-                foreach (var field in dataElement.DataItemList)
+                Field f = (Field) field;
+                if (f.Label.Contains("Angiv om læs er Godkendt"))
                 {
-                    Field f = (Field) field;
-                    if (f.Label.Contains("Angiv om læs er Godkendt"))
-                    {
-                        Console.WriteLine($"The field is {f.Label}");
-                        FieldValue fv = f.FieldValues[0];
-                        String fieldValue = fv.Value;
-                        inspectionApproved = (fieldValue == "1");
-                        approvedValue = fieldValue;
-                        Console.WriteLine($"[DBG] We are setting the approved state to {inspectionApproved.ToString()}");
-                    }
-
-                    if (f.Label.Equals("Kommentar"))
-                    {
-                        Console.WriteLine($"[DBG] The field is {f.Label}");
-                        FieldValue fv = f.FieldValues[0];
-                        String fieldValue = fv.Value;
-                        comment = fieldValue;
-                        Console.WriteLine($"[DBG] We are setting the comment to {comment.ToString()}");
-                    }
+                    Console.WriteLine($"The field is {f.Label}");
+                    FieldValue fv = f.FieldValues[0];
+                    String fieldValue = fv.Value;
+                    inspectionApproved = (fieldValue == "1");
+                    approvedValue = fieldValue;
+                    Console.WriteLine($"[DBG] We are setting the approved state to {inspectionApproved.ToString()}");
                 }
-                #endregion
 
-                Console.WriteLine("TrashInspection: The incoming case is a trash inspection related case");
-                trashInspectionCase.Status = 100;
-                await trashInspectionCase.Update(_dbContext);
-
-                TrashInspection trashInspection =
-                    _dbContext.TrashInspections.SingleOrDefault(x => x.Id == trashInspectionCase.TrashInspectionId);
-                if (trashInspection != null)
+                if (f.Label.Equals("Kommentar"))
                 {
-                    trashInspection.Status = 100;
-                    trashInspection.IsApproved = inspectionApproved;
-                    trashInspection.Comment = comment;
-                    trashInspection.ApprovedValue = approvedValue;
-                    trashInspection.InspectionDone = true;
-                    await trashInspection.Update(_dbContext);
-
-                    List<TrashInspectionCase> trashInspectionCases = _dbContext.TrashInspectionCases
-                        .Where(x => x.TrashInspectionId == trashInspection.Id).ToList();
-                    foreach (TrashInspectionCase inspectionCase in trashInspectionCases)
-                    {
-                        if (await _sdkCore.CaseDelete(int.Parse(inspectionCase.SdkCaseId)))
-                        {
-                            inspectionCase.WorkflowState = Constants.WorkflowStates.Retracted;
-                            await inspectionCase.Update(_dbContext);
-                        }
-                    }
-
-                    #region get settings
-
-                    string callBackUrl = _dbContext.PluginConfigurationValues
-                        .SingleOrDefault(x => x.Name == "TrashInspectionBaseSettings:callBackUrl")?.Value;
-                    Console.WriteLine("[DBG] callBackUrl is : " + callBackUrl);
-
-                    string callBackCredentialDomain = _dbContext.PluginConfigurationValues.SingleOrDefault(x =>
-                        x.Name == "TrashInspectionBaseSettings:CallBackCredentialDomain")?.Value;
-                    Console.WriteLine("[DBG] callBackCredentialDomain is : " + callBackCredentialDomain);
-
-                    string callbackCredentialUserName = _dbContext.PluginConfigurationValues.SingleOrDefault(x =>
-                        x.Name == "TrashInspectionBaseSettings:callbackCredentialUserName")?.Value;
-                    Console.WriteLine("[DBG] callbackCredentialUserName is : " + callbackCredentialUserName);
-
-                    string callbackCredentialPassword = _dbContext.PluginConfigurationValues.SingleOrDefault(x =>
-                        x.Name == "TrashInspectionBaseSettings:CallbackCredentialPassword")?.Value;
-                    Console.WriteLine("[DBG] callbackCredentialPassword is : " + callbackCredentialPassword);
-
-                    string callbackCredentialAuthType = _dbContext.PluginConfigurationValues.SingleOrDefault(x =>
-                        x.Name == "TrashInspectionBaseSettings:CallbackCredentialAuthType")?.Value;
-                    Console.WriteLine("[DBG] callbackCredentialAuthType is : " + callbackCredentialAuthType);
-
-                    Console.WriteLine($"[DBG] trashInspection.WeighingNumber is {trashInspection.WeighingNumber}");
-                    #endregion
-
-                    switch (callbackCredentialAuthType)
-                    {
-                        case "NTLM":
-                            await CallUrlNtlmAuth(callBackUrl, callBackCredentialDomain, callbackCredentialUserName,
-                                callbackCredentialPassword, trashInspection, inspectionApproved);
-                            break;
-                        case "basic":
-                        default:
-                            await CallUrlBaiscAuth(callBackUrl, callBackCredentialDomain, callbackCredentialUserName,
-                                callbackCredentialPassword, trashInspection, inspectionApproved);
-                            break;
-                    }
+                    Console.WriteLine($"[DBG] The field is {f.Label}");
+                    FieldValue fv = f.FieldValues[0];
+                    String fieldValue = fv.Value;
+                    comment = fieldValue;
+                    Console.WriteLine($"[DBG] We are setting the comment to {comment.ToString()}");
                 }
             }
+            #endregion
 
+            Console.WriteLine("TrashInspection: The incoming case is a trash inspection related case");
+            trashInspectionCase.Status = 100;
+            await trashInspectionCase.Update(_dbContext);
+
+            TrashInspection trashInspection =
+                _dbContext.TrashInspections.SingleOrDefault(x => x.Id == trashInspectionCase.TrashInspectionId);
+            if (trashInspection != null)
+            {
+                trashInspection.Status = 100;
+                trashInspection.IsApproved = inspectionApproved;
+                trashInspection.Comment = comment;
+                trashInspection.ApprovedValue = approvedValue;
+                trashInspection.InspectionDone = true;
+                await trashInspection.Update(_dbContext);
+
+                List<TrashInspectionCase> trashInspectionCases = _dbContext.TrashInspectionCases
+                    .Where(x => x.TrashInspectionId == trashInspection.Id).ToList();
+                foreach (TrashInspectionCase inspectionCase in trashInspectionCases)
+                {
+                    if (await _sdkCore.CaseDelete(int.Parse(inspectionCase.SdkCaseId)))
+                    {
+                        inspectionCase.WorkflowState = Constants.WorkflowStates.Retracted;
+                        await inspectionCase.Update(_dbContext);
+                    }
+                }
+
+                #region get settings
+
+                string callBackUrl = _dbContext.PluginConfigurationValues
+                    .SingleOrDefault(x => x.Name == "TrashInspectionBaseSettings:callBackUrl")?.Value;
+                Console.WriteLine("[DBG] callBackUrl is : " + callBackUrl);
+
+                string callBackCredentialDomain = _dbContext.PluginConfigurationValues.SingleOrDefault(x =>
+                    x.Name == "TrashInspectionBaseSettings:CallBackCredentialDomain")?.Value;
+                Console.WriteLine("[DBG] callBackCredentialDomain is : " + callBackCredentialDomain);
+
+                string callbackCredentialUserName = _dbContext.PluginConfigurationValues.SingleOrDefault(x =>
+                    x.Name == "TrashInspectionBaseSettings:callbackCredentialUserName")?.Value;
+                Console.WriteLine("[DBG] callbackCredentialUserName is : " + callbackCredentialUserName);
+
+                string callbackCredentialPassword = _dbContext.PluginConfigurationValues.SingleOrDefault(x =>
+                    x.Name == "TrashInspectionBaseSettings:CallbackCredentialPassword")?.Value;
+                Console.WriteLine("[DBG] callbackCredentialPassword is : " + callbackCredentialPassword);
+
+                string callbackCredentialAuthType = _dbContext.PluginConfigurationValues.SingleOrDefault(x =>
+                    x.Name == "TrashInspectionBaseSettings:CallbackCredentialAuthType")?.Value;
+                Console.WriteLine("[DBG] callbackCredentialAuthType is : " + callbackCredentialAuthType);
+
+                Console.WriteLine($"[DBG] trashInspection.WeighingNumber is {trashInspection.WeighingNumber}");
+                #endregion
+
+                switch (callbackCredentialAuthType)
+                {
+                    case "NTLM":
+                        await CallUrlNtlmAuth(callBackUrl, callBackCredentialDomain, callbackCredentialUserName,
+                            callbackCredentialPassword, trashInspection, inspectionApproved);
+                        break;
+                    case "basic":
+                    default:
+                        await CallUrlBaiscAuth(callBackUrl, callBackCredentialDomain, callbackCredentialUserName,
+                            callbackCredentialPassword, trashInspection, inspectionApproved);
+                        break;
+                }
+            }
         }
 
-        private async Task CallUrlBaiscAuth(string callBackUrl, string callBackCredentialDomain,
-            string callbackCredentialUserName, string callbackCredentialPassword, TrashInspection trashInspection,
-            bool inspectionApproved)
+    }
+
+    private async Task CallUrlBaiscAuth(string callBackUrl, string callBackCredentialDomain,
+        string callbackCredentialUserName, string callbackCredentialPassword, TrashInspection trashInspection,
+        bool inspectionApproved)
+    {
+
+        ChannelFactory<MicrotingWS_Port> factory;
+        MicrotingWS_Port serviceProxy;
+        BasicHttpBinding basicHttpBinding =
+            new BasicHttpBinding();
+        basicHttpBinding.Security.Mode = BasicHttpSecurityMode.TransportCredentialOnly;
+        basicHttpBinding.Security.Transport.ClientCredentialType =
+            HttpClientCredentialType.Basic;
+        factory =
+            new ChannelFactory<MicrotingWS_Port>(basicHttpBinding,
+                new EndpointAddress(
+                    new Uri(callBackUrl)));
+
+        if (callBackCredentialDomain != "...")
         {
-
-            ChannelFactory<MicrotingWS_Port> factory;
-            MicrotingWS_Port serviceProxy;
-            BasicHttpBinding basicHttpBinding =
-                            new BasicHttpBinding();
-                        basicHttpBinding.Security.Mode = BasicHttpSecurityMode.TransportCredentialOnly;
-                        basicHttpBinding.Security.Transport.ClientCredentialType =
-                        HttpClientCredentialType.Basic;
-                        factory =
-                            new ChannelFactory<MicrotingWS_Port>(basicHttpBinding,
-                                new EndpointAddress(
-                                    new Uri(callBackUrl)));
-
-                        if (callBackCredentialDomain != "...")
-                        {
-                            factory.Credentials.Windows.ClientCredential.Domain = callBackCredentialDomain;
-                        }
-
-                        factory.Credentials.UserName.UserName = callbackCredentialUserName;
-                        factory.Credentials.UserName.Password = callbackCredentialPassword;
-
-                        serviceProxy = factory.CreateChannel();
-                        ((ICommunicationObject)serviceProxy).Open();
-
-                        try
-                        {
-                            WeighingFromMicroting2 weighingFromMicroting2 =
-                                new WeighingFromMicroting2(trashInspection.WeighingNumber, inspectionApproved);
-                            Task<WeighingFromMicroting2_Result> result =
-                                serviceProxy.WeighingFromMicroting2Async(weighingFromMicroting2);
-
-
-                            Console.WriteLine("[DBG] Result is " + result.Result.return_value);
-                            trashInspection.SuccessMessageFromCallBack = result.Result.return_value;
-                            trashInspection.ResponseSendToCallBackUrl = true;
-                            await trashInspection.Update(_dbContext);
-
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine("[ERR] We got the following error: " + ex.Message);
-                            trashInspection.ErrorFromCallBack = ex.Message;
-                            await trashInspection.Update(_dbContext);
-                        }
-                        finally
-                        {
-                            // cleanup
-                            factory.Close();
-                            ((ICommunicationObject)serviceProxy).Close();
-                            // *** ENSURE CLEANUP *** \\
-                            //CloseCommunicationObjects((ICommunicationObject)serviceProxy, factory);
-                            //OperationContext.Current = prevOpContext; // Or set to null if you didn't capture the previous context
-                        }
+            factory.Credentials.Windows.ClientCredential.Domain = callBackCredentialDomain;
         }
 
-        private async Task CallUrlNtlmAuth(string callBackUrl, string callBackCredentialDomain,
-            string callbackCredentialUserName, string callbackCredentialPassword, TrashInspection trashInspection,
-            bool inspectionApproved)
+        factory.Credentials.UserName.UserName = callbackCredentialUserName;
+        factory.Credentials.UserName.Password = callbackCredentialPassword;
+
+        serviceProxy = factory.CreateChannel();
+        ((ICommunicationObject)serviceProxy).Open();
+
+        try
         {
-
-            ChannelFactory<MicrotingWS_Port> factory;
-            MicrotingWS_Port serviceProxy;
-            BasicHttpBinding basicHttpBindingntlm =
-                            new BasicHttpBinding(BasicHttpSecurityMode.TransportCredentialOnly);
-                        basicHttpBindingntlm.Security.Transport.ClientCredentialType =
-                        HttpClientCredentialType.Ntlm;
-                        factory =
-                            new ChannelFactory<MicrotingWS_Port>(basicHttpBindingntlm,
-                                new EndpointAddress(
-                                    new Uri(callBackUrl)));
-
-                        if (callBackCredentialDomain != "...")
-                        {
-                            factory.Credentials.Windows.ClientCredential.Domain = callBackCredentialDomain;
-                        }
-
-                        factory.Credentials.Windows.ClientCredential.UserName = callbackCredentialUserName;
-                        factory.Credentials.Windows.ClientCredential.Password = callbackCredentialPassword;
-
-                        serviceProxy = factory.CreateChannel();
-                        ((ICommunicationObject)serviceProxy).Open();
-
-                        try
-                        {
-                            WeighingFromMicroting2 weighingFromMicroting2 =
-                                new WeighingFromMicroting2(trashInspection.WeighingNumber, inspectionApproved);
-                            Task<WeighingFromMicroting2_Result> result =
-                                serviceProxy.WeighingFromMicroting2Async(weighingFromMicroting2);
+            WeighingFromMicroting2 weighingFromMicroting2 =
+                new WeighingFromMicroting2(trashInspection.WeighingNumber, inspectionApproved);
+            Task<WeighingFromMicroting2_Result> result =
+                serviceProxy.WeighingFromMicroting2Async(weighingFromMicroting2);
 
 
-                            Console.WriteLine("[DBG] Result is " + result.Result.return_value);
-                            trashInspection.SuccessMessageFromCallBack = result.Result.return_value;
-                            trashInspection.ResponseSendToCallBackUrl = true;
-                            await trashInspection.Update(_dbContext);
+            Console.WriteLine("[DBG] Result is " + result.Result.return_value);
+            trashInspection.SuccessMessageFromCallBack = result.Result.return_value;
+            trashInspection.ResponseSendToCallBackUrl = true;
+            await trashInspection.Update(_dbContext);
 
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine("[ERR] We got the following error: " + ex.Message);
-                            trashInspection.ErrorFromCallBack = ex.Message;
-                            await trashInspection.Update(_dbContext);
-                        }
-                        finally
-                        {
-                            // cleanup
-                            factory.Close();
-                            ((ICommunicationObject)serviceProxy).Close();
-                            // *** ENSURE CLEANUP *** \\
-                            //CloseCommunicationObjects((ICommunicationObject)serviceProxy, factory);
-                            //OperationContext.Current = prevOpContext; // Or set to null if you didn't capture the previous context
-                        }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[ERR] We got the following error: " + ex.Message);
+            trashInspection.ErrorFromCallBack = ex.Message;
+            await trashInspection.Update(_dbContext);
+        }
+        finally
+        {
+            // cleanup
+            factory.Close();
+            ((ICommunicationObject)serviceProxy).Close();
+            // *** ENSURE CLEANUP *** \\
+            //CloseCommunicationObjects((ICommunicationObject)serviceProxy, factory);
+            //OperationContext.Current = prevOpContext; // Or set to null if you didn't capture the previous context
+        }
+    }
+
+    private async Task CallUrlNtlmAuth(string callBackUrl, string callBackCredentialDomain,
+        string callbackCredentialUserName, string callbackCredentialPassword, TrashInspection trashInspection,
+        bool inspectionApproved)
+    {
+
+        ChannelFactory<MicrotingWS_Port> factory;
+        MicrotingWS_Port serviceProxy;
+        BasicHttpBinding basicHttpBindingntlm =
+            new BasicHttpBinding(BasicHttpSecurityMode.TransportCredentialOnly);
+        basicHttpBindingntlm.Security.Transport.ClientCredentialType =
+            HttpClientCredentialType.Ntlm;
+        factory =
+            new ChannelFactory<MicrotingWS_Port>(basicHttpBindingntlm,
+                new EndpointAddress(
+                    new Uri(callBackUrl)));
+
+        if (callBackCredentialDomain != "...")
+        {
+            factory.Credentials.Windows.ClientCredential.Domain = callBackCredentialDomain;
+        }
+
+        factory.Credentials.Windows.ClientCredential.UserName = callbackCredentialUserName;
+        factory.Credentials.Windows.ClientCredential.Password = callbackCredentialPassword;
+
+        serviceProxy = factory.CreateChannel();
+        ((ICommunicationObject)serviceProxy).Open();
+
+        try
+        {
+            WeighingFromMicroting2 weighingFromMicroting2 =
+                new WeighingFromMicroting2(trashInspection.WeighingNumber, inspectionApproved);
+            Task<WeighingFromMicroting2_Result> result =
+                serviceProxy.WeighingFromMicroting2Async(weighingFromMicroting2);
+
+
+            Console.WriteLine("[DBG] Result is " + result.Result.return_value);
+            trashInspection.SuccessMessageFromCallBack = result.Result.return_value;
+            trashInspection.ResponseSendToCallBackUrl = true;
+            await trashInspection.Update(_dbContext);
+
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[ERR] We got the following error: " + ex.Message);
+            trashInspection.ErrorFromCallBack = ex.Message;
+            await trashInspection.Update(_dbContext);
+        }
+        finally
+        {
+            // cleanup
+            factory.Close();
+            ((ICommunicationObject)serviceProxy).Close();
+            // *** ENSURE CLEANUP *** \\
+            //CloseCommunicationObjects((ICommunicationObject)serviceProxy, factory);
+            //OperationContext.Current = prevOpContext; // Or set to null if you didn't capture the previous context
         }
     }
 }
