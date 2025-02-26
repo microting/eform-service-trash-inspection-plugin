@@ -65,7 +65,7 @@ jobs:
       run: |-
         docker tag microtingas/trash-inspection-service-container:latest microtingas/trash-inspection-service-container:latest
     - run: docker save microtingas/trash-inspection-service-container:latest -o trash-inspection-service-container.tar
-    - uses: actions/upload-artifact@v2
+    - uses: actions/upload-artifact@v4
       with:
         name: trash-inspection-service-container
         path: trash-inspection-service-container.tar
@@ -86,7 +86,7 @@ jobs:
       run: |
         docker pull rabbitmq:latest
         docker run -d --hostname my-rabbit --name some-rabbit --network data -e RABBITMQ_DEFAULT_USER=admin -e RABBITMQ_DEFAULT_PASS=password rabbitmq:latest
-    - uses: actions/download-artifact@v4.1.7
+    - uses: actions/download-artifact@v4
       with:
         name: trash-inspection-service-container
     - run: docker load -i trash-inspection-service-container.tar
