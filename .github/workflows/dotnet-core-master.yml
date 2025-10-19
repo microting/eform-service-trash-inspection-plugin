@@ -141,6 +141,32 @@ jobs:
       uses: actions/setup-dotnet@v3
       with:
         dotnet-version: 9.0.x
+    - name: Wait for MariaDB to be ready
+      run: |
+        echo "Waiting for MariaDB to be ready..."
+        for i in {1..30}; do
+          if docker exec mariadbtest mariadb -u root --password=secretpassword -e "SELECT 1" > /dev/null 2>&1; then
+            echo "MariaDB is ready!"
+            break
+          fi
+          echo "Waiting for MariaDB... ($i/30)"
+          sleep 2
+        done
+    - name: Load main DB dump
+      run: |
+        docker exec -i mariadbtest mariadb -h 127.0.0.1 -u root --password=secretpassword -e 'CREATE DATABASE IF NOT EXISTS `420_SDK`'
+        docker exec -i mariadbtest mariadb -h 127.0.0.1 -u root --password=secretpassword 420_SDK < main/420_SDK.sql
+    - name: Setup test database for handler integration tests
+      run: |
+        echo "Setting up test data for all handler test scenarios..."
+        docker exec -i mariadbtest mariadb -h 127.0.0.1 -u root --password=secretpassword 420_SDK < main/ServiceTrashInspectionPlugin.Integration.Test/Handlers/setup-test-database.sql
+        echo "Test database setup complete!"
+    - name: Verify test data setup
+      run: |
+        echo "Verifying test data was inserted..."
+        docker exec -i mariadbtest mariadb -u root --password=secretpassword -e "SELECT COUNT(*) as TrashInspectionCases_Count FROM 420_SDK.TrashInspectionCases;"
+        docker exec -i mariadbtest mariadb -u root --password=secretpassword -e "SELECT COUNT(*) as TrashInspections_Count FROM 420_SDK.TrashInspections;"
+        docker exec -i mariadbtest mariadb -u root --password=secretpassword -e "SELECT COUNT(*) as PluginConfigValues_Count FROM 420_SDK.PluginConfigurationValues WHERE Name LIKE 'TrashInspectionBaseSettings:%';"
     - name: Install dependencies
       run: dotnet restore eform-service-trash-inspection-plugin
     - name: Build

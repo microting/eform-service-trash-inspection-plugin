@@ -148,6 +148,44 @@ For comprehensive testing, we recommend:
 | 100 | Completed | eFormCompletedHandler |
 | 110 | Parsing Error | EformParsingErrorHandler |
 
+## Test Data Setup
+
+The `setup-test-database.sql` script creates comprehensive test data for all handler scenarios:
+
+### Test Scenarios Included
+
+1. **EformParsedByServerHandler** (Case ID: 10001)
+   - Initial status: 50
+   - Expected result: Status updated to 70
+
+2. **EformParsingErrorHandler** (Case ID: 10002)
+   - Initial status: 70
+   - Expected result: Status updated to 110
+
+3. **eFormRetrievedHandler** (Case ID: 10003)
+   - Case status: 50, Inspection status: 50
+   - Expected result: Both updated to 77
+
+4. **eFormCompletedHandler - Approved** (Case ID: 10004)
+   - Initial status: 77
+   - Expected result: Status 100, IsApproved=true, InspectionDone=true
+
+5. **eFormCompletedHandler - Rejected** (Case ID: 10005)
+   - Initial status: 77
+   - Expected result: Status 100, IsApproved=false, InspectionDone=true
+
+6. **Status Already at Target** (Case ID: 10006)
+   - Initial status: 100
+   - Expected result: No change (already completed)
+
+### Database Tables Populated
+
+- **TrashInspectionCases** - Test cases with various status codes
+- **TrashInspections** - Linked inspection records
+- **Cases** - SDK case records (required for EformParsedByServerHandler)
+- **PluginConfigurationValues** - Configuration for Navision callback
+- **Languages** - Danish language entry (required for field parsing)
+
 ## Configuration Requirements
 
 For `eFormCompletedHandler` to work correctly, the following configuration values must be set in the database:
@@ -157,6 +195,8 @@ For `eFormCompletedHandler` to work correctly, the following configuration value
 - `TrashInspectionBaseSettings:callbackCredentialUserName` - Username for authentication
 - `TrashInspectionBaseSettings:CallbackCredentialPassword` - Password for authentication
 - `TrashInspectionBaseSettings:CallbackCredentialAuthType` - "NTLM" or "basic"
+
+**Note**: These values are automatically populated by `setup-test-database.sql` for testing purposes.
 
 ## External API Documentation
 
@@ -186,8 +226,22 @@ The handlers integrate with Microsoft Dynamics 365 Business Central (formerly Na
 
 ## Running the Tests
 
+### Local Testing
+
+For local development, you need to set up a test database first:
+
 ```bash
-# Run all tests
+# 1. Start MariaDB in Docker
+docker run --name mariadb-test -e MYSQL_ROOT_PASSWORD=secretpassword -p 3306:3306 -d mariadb:10.8
+
+# 2. Create database and load schema
+docker exec -i mariadb-test mariadb -u root --password=secretpassword -e 'CREATE DATABASE `420_SDK`'
+docker exec -i mariadb-test mariadb -u root --password=secretpassword 420_SDK < 420_SDK.sql
+
+# 3. Setup test data for handler integration tests
+docker exec -i mariadb-test mariadb -u root --password=secretpassword 420_SDK < ServiceTrashInspectionPlugin.Integration.Test/Handlers/setup-test-database.sql
+
+# 4. Run tests
 dotnet test
 
 # Run specific handler tests
@@ -199,6 +253,19 @@ dotnet test --filter "FullyQualifiedName~eFormCompletedHandlerTests"
 # Run with verbose output
 dotnet test --logger "console;verbosity=detailed"
 ```
+
+### CI/CD Testing
+
+The GitHub Actions workflows automatically set up the test database with all required test data:
+- `.github/workflows/dotnet-core-pr.yml` - Pull request testing
+- `.github/workflows/dotnet-core-master.yml` - Master branch testing
+
+The workflows include:
+1. MariaDB container startup
+2. Database schema loading from `420_SDK.sql`
+3. Test data setup from `setup-test-database.sql`
+4. Verification of test data insertion
+5. Running all integration tests
 
 ## Future Improvements
 
