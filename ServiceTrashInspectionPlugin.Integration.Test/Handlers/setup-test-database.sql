@@ -4,7 +4,52 @@
 
 USE `420_SDK`;
 
--- Ensure PluginConfigurationValues table exists and has the required configuration for eFormCompletedHandler
+-- Create PluginConfigurationValues table if it doesn't exist
+-- This table is used by eFormApi.BasePn for plugin configuration
+CREATE TABLE IF NOT EXISTS `PluginConfigurationValues` (
+    `Id` int(11) NOT NULL AUTO_INCREMENT,
+    `Name` varchar(255) NOT NULL,
+    `Value` longtext DEFAULT NULL,
+    `CreatedAt` datetime(6) DEFAULT NULL,
+    `UpdatedAt` datetime(6) DEFAULT NULL,
+    `WorkflowState` varchar(255) DEFAULT NULL,
+    `Version` int(11) DEFAULT NULL,
+    PRIMARY KEY (`Id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Create TrashInspectionCases table if it doesn't exist
+CREATE TABLE IF NOT EXISTS `TrashInspectionCases` (
+    `Id` int(11) NOT NULL AUTO_INCREMENT,
+    `SdkCaseId` varchar(255) DEFAULT NULL,
+    `Status` int(11) DEFAULT NULL,
+    `TrashInspectionId` int(11) DEFAULT NULL,
+    `CreatedAt` datetime(6) DEFAULT NULL,
+    `UpdatedAt` datetime(6) DEFAULT NULL,
+    `WorkflowState` varchar(255) DEFAULT NULL,
+    `Version` int(11) DEFAULT NULL,
+    PRIMARY KEY (`Id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Create TrashInspections table if it doesn't exist
+CREATE TABLE IF NOT EXISTS `TrashInspections` (
+    `Id` int(11) NOT NULL AUTO_INCREMENT,
+    `Status` int(11) DEFAULT NULL,
+    `WeighingNumber` varchar(255) DEFAULT NULL,
+    `IsApproved` tinyint(1) DEFAULT 0,
+    `Comment` longtext DEFAULT NULL,
+    `ApprovedValue` varchar(255) DEFAULT NULL,
+    `InspectionDone` tinyint(1) DEFAULT 0,
+    `ResponseSendToCallBackUrl` tinyint(1) DEFAULT 0,
+    `SuccessMessageFromCallBack` longtext DEFAULT NULL,
+    `ErrorFromCallBack` longtext DEFAULT NULL,
+    `CreatedAt` datetime(6) DEFAULT NULL,
+    `UpdatedAt` datetime(6) DEFAULT NULL,
+    `WorkflowState` varchar(255) DEFAULT NULL,
+    `Version` int(11) DEFAULT NULL,
+    PRIMARY KEY (`Id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Insert configuration values for eFormCompletedHandler
 -- These are needed for the SOAP callback to Navision Business Central 365
 INSERT INTO `PluginConfigurationValues` (`Name`, `Value`, `CreatedAt`, `UpdatedAt`, `WorkflowState`, `Version`)
 VALUES 
