@@ -126,11 +126,13 @@ VALUES
     (6, 10006, NOW(), NOW(), 'Created', 1);
 
 -- Add Language entry for Danish (required for eFormCompletedHandler)
-INSERT INTO `Languages` (`Id`, `Name`, `LanguageCode`, `IsActive`, `CreatedAt`, `UpdatedAt`, `WorkflowState`, `Version`)
+-- Note: Languages table already has data, but we ensure Danish exists for ID=1
+INSERT INTO `Languages` (`Id`, `Version`, `WorkflowState`, `CreatedAt`, `UpdatedAt`, `Name`, `LanguageCode`)
 VALUES 
-    (1, 'Danish', 'da', 1, NOW(), NOW(), 'Created', 1)
+    (1, 1, 'created', NOW(), NOW(), 'Danish', 'da')
 ON DUPLICATE KEY UPDATE 
-    `Name` = VALUES(`Name`);
+    `Name` = VALUES(`Name`),
+    `LanguageCode` = VALUES(`LanguageCode`);
 
 -- Status code reference:
 -- 50  = Initial/Created
