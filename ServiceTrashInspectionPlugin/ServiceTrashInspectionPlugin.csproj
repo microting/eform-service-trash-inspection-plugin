@@ -19,7 +19,7 @@
     <PackageReference Include="Microsoft.Extensions.DependencyModel" Version="10.0.1" />
     <PackageReference Include="Microting.eForm" Version="10.0.5" />
     <PackageReference Include="Microting.eFormApi.BasePn" Version="10.0.5" />
-    <PackageReference Include="Microting.eFormTrashInspectionBase" Version="10.0.4">
+    <PackageReference Include="Microting.eFormTrashInspectionBase" Version="10.0.5">
 	        <IncludeAssets>all</IncludeAssets>
 	</PackageReference>
     <PackageReference Include="Microting.WindowsService.BasePn" Version="2.0.0" />
