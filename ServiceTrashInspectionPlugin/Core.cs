@@ -30,6 +30,9 @@ using ServiceTrashInspectionPlugin.Installers;
 using ServiceTrashInspectionPlugin.Messages;
 using Microting.eFormTrashInspectionBase.Infrastructure.Data.Factories;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
+using System.Linq;
 using Microting.eForm.Dto;
 using Microting.eFormTrashInspectionBase.Infrastructure.Data;
 using ServiceTrashInspectionPlugin.Handlers;
@@ -146,7 +149,11 @@ public class Core : ISdkEventHandler
                 TrashInspectionPnContextFactory contextFactory = new TrashInspectionPnContextFactory();
 
                 _dbContext = contextFactory.CreateDbContext(new[] { connectionString });
-                _dbContext.Database.Migrate();
+                var historyRepo = _dbContext.GetService<IHistoryRepository>();
+                if (!historyRepo.Exists() || _dbContext.Database.GetPendingMigrations().Any())
+                {
+                    _dbContext.Database.Migrate();
+                }
 
                 _coreAvailable = true;
                 _coreStatChanging = false;
