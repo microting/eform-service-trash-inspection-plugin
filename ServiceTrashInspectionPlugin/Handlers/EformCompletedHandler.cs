@@ -21,8 +21,12 @@ SOFTWARE.
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.ServiceModel;
+using System.Text;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microting.eForm.Dto;
 using Microting.eForm.Infrastructure;
@@ -226,61 +230,61 @@ public class eFormCompletedHandler : IHandleMessages<eFormCompleted>
         }
     }
 
+    // urn/namespace of the NAV MicrotingWS codeunit, matching the generated service reference.
+    private const string MicrotingWsNamespace = "urn:microsoft-dynamics-schemas/codeunit/MicrotingWS";
+
     private async Task CallUrlNtlmAuth(string callBackUrl, string callBackCredentialDomain,
         string callbackCredentialUserName, string callbackCredentialPassword, TrashInspection trashInspection,
         bool inspectionApproved)
     {
+        // WCF's ChannelFactory NTLM handshake fails on modern .NET against servers that offer only
+        // 'WWW-Authenticate: NTLM' (single scheme), which is exactly what this NAV endpoint returns.
+        // This is a documented, unresolved WCF-on-.NET-Core limitation (dotnet/wcf #4520, #4094, #5515).
+        // HttpClient's NTLM handshake is reliable here, so we issue the SOAP call directly.
+        XNamespace soapNs = "http://schemas.xmlsoap.org/soap/envelope/";
+        XNamespace svcNs = MicrotingWsNamespace;
 
-        ChannelFactory<MicrotingWS_Port> factory;
-        MicrotingWS_Port serviceProxy;
-        BasicHttpBinding basicHttpBindingntlm =
-            new BasicHttpBinding(BasicHttpSecurityMode.TransportCredentialOnly);
-        basicHttpBindingntlm.Security.Transport.ClientCredentialType =
-            HttpClientCredentialType.Ntlm;
-        factory =
-            new ChannelFactory<MicrotingWS_Port>(basicHttpBindingntlm,
-                new EndpointAddress(
-                    new Uri(callBackUrl)));
+        XDocument envelope = new XDocument(
+            new XDeclaration("1.0", "utf-8", null),
+            new XElement(soapNs + "Envelope",
+                new XAttribute(XNamespace.Xmlns + "soap", soapNs.NamespaceName),
+                new XAttribute(XNamespace.Xmlns + "ns", svcNs.NamespaceName),
+                new XElement(soapNs + "Body",
+                    new XElement(svcNs + "WeighingFromMicroting2",
+                        new XElement(svcNs + "_WeighingNo", trashInspection.WeighingNumber),
+                        new XElement(svcNs + "_Approved", inspectionApproved)))));
 
-        if (callBackCredentialDomain != "...")
-        {
-            factory.Credentials.Windows.ClientCredential.Domain = callBackCredentialDomain;
-        }
+        NetworkCredential credential = callBackCredentialDomain != "..."
+            ? new NetworkCredential(callbackCredentialUserName, callbackCredentialPassword, callBackCredentialDomain)
+            : new NetworkCredential(callbackCredentialUserName, callbackCredentialPassword);
 
-        factory.Credentials.Windows.ClientCredential.UserName = callbackCredentialUserName;
-        factory.Credentials.Windows.ClientCredential.Password = callbackCredentialPassword;
-
-        serviceProxy = factory.CreateChannel();
-        ((ICommunicationObject)serviceProxy).Open();
+        using HttpClientHandler handler = new HttpClientHandler { Credentials = credential };
+        using HttpClient httpClient = new HttpClient(handler);
 
         try
         {
-            WeighingFromMicroting2 weighingFromMicroting2 =
-                new WeighingFromMicroting2(trashInspection.WeighingNumber, inspectionApproved);
-            Task<WeighingFromMicroting2_Result> result =
-                serviceProxy.WeighingFromMicroting2Async(weighingFromMicroting2);
+            using StringContent content = new StringContent(
+                envelope.Declaration + envelope.ToString(SaveOptions.DisableFormatting),
+                Encoding.UTF8, "text/xml");
+            content.Headers.Add("SOAPAction", $"\"{MicrotingWsNamespace}:WeighingFromMicroting2\"");
 
+            HttpResponseMessage response = await httpClient.PostAsync(callBackUrl, content);
+            string responseBody = await response.Content.ReadAsStringAsync();
+            response.EnsureSuccessStatusCode();
 
-            Console.WriteLine("[DBG] Result is " + result.Result.return_value);
-            trashInspection.SuccessMessageFromCallBack = result.Result.return_value;
+            string returnValue = XDocument.Parse(responseBody).Descendants()
+                .FirstOrDefault(x => x.Name.LocalName == "return_value")?.Value;
+
+            Console.WriteLine("[DBG] Result is " + returnValue);
+            trashInspection.SuccessMessageFromCallBack = returnValue;
             trashInspection.ResponseSendToCallBackUrl = true;
             await trashInspection.Update(_dbContext);
-
         }
         catch (Exception ex)
         {
             Console.WriteLine("[ERR] We got the following error: " + ex.Message);
             trashInspection.ErrorFromCallBack = ex.Message;
             await trashInspection.Update(_dbContext);
-        }
-        finally
-        {
-            // cleanup
-            factory.Close();
-            ((ICommunicationObject)serviceProxy).Close();
-            // *** ENSURE CLEANUP *** \\
-            //CloseCommunicationObjects((ICommunicationObject)serviceProxy, factory);
-            //OperationContext.Current = prevOpContext; // Or set to null if you didn't capture the previous context
         }
     }
 }
