@@ -26,7 +26,6 @@ using System.Net.Http;
 using System.ServiceModel;
 using System.Text;
 using System.Threading.Tasks;
-using System.Xml.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microting.eForm.Dto;
 using Microting.eForm.Infrastructure;
@@ -230,42 +229,20 @@ public class eFormCompletedHandler : IHandleMessages<eFormCompleted>
         }
     }
 
-    // urn/namespace of the NAV MicrotingWS codeunit, matching the generated service reference.
-    private const string MicrotingWsNamespace = "urn:microsoft-dynamics-schemas/codeunit/MicrotingWS";
-
     private async Task CallUrlNtlmAuth(string callBackUrl, string callBackCredentialDomain,
         string callbackCredentialUserName, string callbackCredentialPassword, TrashInspection trashInspection,
         bool inspectionApproved)
     {
         // WCF's ChannelFactory NTLM handshake fails on modern .NET against servers that offer only
-        // 'WWW-Authenticate: NTLM' (single scheme), which is exactly what this NAV endpoint returns.
-        // This is a documented, unresolved WCF-on-.NET-Core limitation (dotnet/wcf #4520, #4094, #5515).
-        // HttpClient's NTLM handshake is reliable here, so we issue the SOAP call directly.
-        XNamespace soapNs = "http://schemas.xmlsoap.org/soap/envelope/";
-        XNamespace svcNs = MicrotingWsNamespace;
+        // 'WWW-Authenticate: NTLM' (single scheme), which is exactly what this NAV endpoint returns
+        // (dotnet/wcf #4520, #4094, #5515), so we issue the SOAP call via HttpClient. NTLM on the
+        // Linux container additionally requires gss-ntlmssp + the OpenSSL legacy provider, enabled in
+        // Dockerfile-service, otherwise the handshake crypto is unavailable and the server returns 401.
+        string soapBody = NavSoap.BuildWeighingFromMicroting2Envelope(trashInspection.WeighingNumber, inspectionApproved);
 
-        XDocument envelope = new XDocument(
-            new XDeclaration("1.0", "utf-8", null),
-            new XElement(soapNs + "Envelope",
-                new XAttribute(XNamespace.Xmlns + "soap", soapNs.NamespaceName),
-                new XAttribute(XNamespace.Xmlns + "ns", svcNs.NamespaceName),
-                new XElement(soapNs + "Body",
-                    new XElement(svcNs + "WeighingFromMicroting2",
-                        new XElement(svcNs + "_WeighingNo", trashInspection.WeighingNumber),
-                        new XElement(svcNs + "_Approved", inspectionApproved)))));
-        string soapBody = envelope.Declaration + envelope.ToString(SaveOptions.DisableFormatting);
-
-        bool hasDomain = callBackCredentialDomain != "...";
-        NetworkCredential credential = hasDomain
+        NetworkCredential credential = callBackCredentialDomain != "..."
             ? new NetworkCredential(callbackCredentialUserName, callbackCredentialPassword, callBackCredentialDomain)
             : new NetworkCredential(callbackCredentialUserName, callbackCredentialPassword);
-
-        Console.WriteLine("[DBG][NTLM] ===== Preparing NTLM callback =====");
-        Console.WriteLine($"[DBG][NTLM] POST {callBackUrl}");
-        Console.WriteLine($"[DBG][NTLM] Credentials configured (domain {(hasDomain ? "set" : "not set")})");
-        Console.WriteLine($"[DBG][NTLM] SOAPAction=\"{MicrotingWsNamespace}:WeighingFromMicroting2\"");
-        Console.WriteLine("[DBG][NTLM] Request body:");
-        Console.WriteLine(soapBody);
 
         using HttpClientHandler handler = new HttpClientHandler { Credentials = credential };
         using HttpClient httpClient = new HttpClient(handler);
@@ -273,23 +250,10 @@ public class eFormCompletedHandler : IHandleMessages<eFormCompleted>
         try
         {
             using StringContent content = new StringContent(soapBody, Encoding.UTF8, "text/xml");
-            content.Headers.Add("SOAPAction", $"\"{MicrotingWsNamespace}:WeighingFromMicroting2\"");
+            content.Headers.Add("SOAPAction", $"\"{NavSoap.WeighingFromMicroting2Action}\"");
 
             HttpResponseMessage response = await httpClient.PostAsync(callBackUrl, content);
             string responseBody = await response.Content.ReadAsStringAsync();
-
-            Console.WriteLine($"[DBG][NTLM] Response status: {(int)response.StatusCode} {response.ReasonPhrase}");
-            Console.WriteLine("[DBG][NTLM] Response headers:");
-            foreach (KeyValuePair<string, IEnumerable<string>> header in response.Headers)
-            {
-                Console.WriteLine($"[DBG][NTLM]   {header.Key}: {string.Join(", ", header.Value)}");
-            }
-            foreach (KeyValuePair<string, IEnumerable<string>> header in response.Content.Headers)
-            {
-                Console.WriteLine($"[DBG][NTLM]   {header.Key}: {string.Join(", ", header.Value)}");
-            }
-            Console.WriteLine("[DBG][NTLM] Response body:");
-            Console.WriteLine(responseBody);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -304,8 +268,7 @@ public class eFormCompletedHandler : IHandleMessages<eFormCompleted>
                 return;
             }
 
-            string returnValue = XDocument.Parse(responseBody).Descendants()
-                .FirstOrDefault(x => x.Name.LocalName == "return_value")?.Value;
+            string returnValue = NavSoap.ParseReturnValue(responseBody);
 
             Console.WriteLine("[DBG][NTLM] Result is " + returnValue);
             trashInspection.SuccessMessageFromCallBack = returnValue;
@@ -314,11 +277,7 @@ public class eFormCompletedHandler : IHandleMessages<eFormCompleted>
         }
         catch (Exception ex)
         {
-            Console.WriteLine("[ERR][NTLM] Exception during callback: " + ex);
-            for (Exception inner = ex.InnerException; inner != null; inner = inner.InnerException)
-            {
-                Console.WriteLine("[ERR][NTLM] Inner exception: " + inner);
-            }
+            Console.WriteLine("[ERR][NTLM] Exception during callback: " + ex.Message);
             trashInspection.ErrorFromCallBack = ex.Message;
             await trashInspection.Update(_dbContext);
         }
