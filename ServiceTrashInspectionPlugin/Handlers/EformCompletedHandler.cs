@@ -20,7 +20,6 @@ SOFTWARE.
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.Tracing;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -263,16 +262,10 @@ public class eFormCompletedHandler : IHandleMessages<eFormCompleted>
 
         Console.WriteLine("[DBG][NTLM] ===== Preparing NTLM callback =====");
         Console.WriteLine($"[DBG][NTLM] POST {callBackUrl}");
-        Console.WriteLine($"[DBG][NTLM] Credential domain='{(hasDomain ? callBackCredentialDomain : "(none)")}' " +
-                          $"user='{callbackCredentialUserName}' passwordLength={callbackCredentialPassword?.Length ?? 0}");
+        Console.WriteLine($"[DBG][NTLM] Credentials configured (domain {(hasDomain ? "set" : "not set")})");
         Console.WriteLine($"[DBG][NTLM] SOAPAction=\"{MicrotingWsNamespace}:WeighingFromMicroting2\"");
         Console.WriteLine("[DBG][NTLM] Request body:");
         Console.WriteLine(soapBody);
-
-        // Stream the low-level HTTP + NTLM/SSPI negotiation (System.Net.* EventSources) to the log for
-        // the duration of this call so we can see exactly which schemes the server challenges with and
-        // where the handshake is rejected. Scoped with `using` to limit the noise to this one call.
-        using NetworkDiagnosticsListener netDiagnostics = new NetworkDiagnosticsListener();
 
         using HttpClientHandler handler = new HttpClientHandler { Credentials = credential };
         using HttpClient httpClient = new HttpClient(handler);
@@ -328,52 +321,6 @@ public class eFormCompletedHandler : IHandleMessages<eFormCompleted>
             }
             trashInspection.ErrorFromCallBack = ex.Message;
             await trashInspection.Update(_dbContext);
-        }
-    }
-
-    // Streams the low-level HTTP and NTLM/SSPI negotiation from the System.Net.Http and
-    // System.Net.Security EventSources (including their internal-diagnostics variants) to the console
-    // while active. Diagnostic aid for the NTLM callback 401; scope its lifetime with `using`.
-    private sealed class NetworkDiagnosticsListener : EventListener
-    {
-        private static readonly HashSet<string> Sources = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "System.Net.Http",
-            "System.Net.Security",
-            "Private.InternalDiagnostics.System.Net.Http",
-            "Private.InternalDiagnostics.System.Net.Security"
-        };
-
-        protected override void OnEventSourceCreated(EventSource eventSource)
-        {
-            if (Sources.Contains(eventSource.Name))
-            {
-                EnableEvents(eventSource, EventLevel.Verbose, EventKeywords.All);
-            }
-        }
-
-        protected override void OnEventWritten(EventWrittenEventArgs eventData)
-        {
-            try
-            {
-                List<string> parts = new List<string>();
-                if (eventData.Payload != null)
-                {
-                    for (int i = 0; i < eventData.Payload.Count; i++)
-                    {
-                        string name = eventData.PayloadNames != null && i < eventData.PayloadNames.Count
-                            ? eventData.PayloadNames[i]
-                            : "arg" + i;
-                        parts.Add($"{name}={eventData.Payload[i]}");
-                    }
-                }
-
-                Console.WriteLine($"[NET][{eventData.EventSource.Name}] {eventData.EventName} {string.Join(" ", parts)}");
-            }
-            catch
-            {
-                // Never let diagnostics logging break the callback.
-            }
         }
     }
 }
