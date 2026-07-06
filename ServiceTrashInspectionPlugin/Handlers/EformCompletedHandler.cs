@@ -20,6 +20,7 @@ SOFTWARE.
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.Tracing;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -253,38 +254,126 @@ public class eFormCompletedHandler : IHandleMessages<eFormCompleted>
                     new XElement(svcNs + "WeighingFromMicroting2",
                         new XElement(svcNs + "_WeighingNo", trashInspection.WeighingNumber),
                         new XElement(svcNs + "_Approved", inspectionApproved)))));
+        string soapBody = envelope.Declaration + envelope.ToString(SaveOptions.DisableFormatting);
 
-        NetworkCredential credential = callBackCredentialDomain != "..."
+        bool hasDomain = callBackCredentialDomain != "...";
+        NetworkCredential credential = hasDomain
             ? new NetworkCredential(callbackCredentialUserName, callbackCredentialPassword, callBackCredentialDomain)
             : new NetworkCredential(callbackCredentialUserName, callbackCredentialPassword);
+
+        Console.WriteLine("[DBG][NTLM] ===== Preparing NTLM callback =====");
+        Console.WriteLine($"[DBG][NTLM] POST {callBackUrl}");
+        Console.WriteLine($"[DBG][NTLM] Credential domain='{(hasDomain ? callBackCredentialDomain : "(none)")}' " +
+                          $"user='{callbackCredentialUserName}' passwordLength={callbackCredentialPassword?.Length ?? 0}");
+        Console.WriteLine($"[DBG][NTLM] SOAPAction=\"{MicrotingWsNamespace}:WeighingFromMicroting2\"");
+        Console.WriteLine("[DBG][NTLM] Request body:");
+        Console.WriteLine(soapBody);
+
+        // Stream the low-level HTTP + NTLM/SSPI negotiation (System.Net.* EventSources) to the log for
+        // the duration of this call so we can see exactly which schemes the server challenges with and
+        // where the handshake is rejected. Scoped with `using` to limit the noise to this one call.
+        using NetworkDiagnosticsListener netDiagnostics = new NetworkDiagnosticsListener();
 
         using HttpClientHandler handler = new HttpClientHandler { Credentials = credential };
         using HttpClient httpClient = new HttpClient(handler);
 
         try
         {
-            using StringContent content = new StringContent(
-                envelope.Declaration + envelope.ToString(SaveOptions.DisableFormatting),
-                Encoding.UTF8, "text/xml");
+            using StringContent content = new StringContent(soapBody, Encoding.UTF8, "text/xml");
             content.Headers.Add("SOAPAction", $"\"{MicrotingWsNamespace}:WeighingFromMicroting2\"");
 
             HttpResponseMessage response = await httpClient.PostAsync(callBackUrl, content);
             string responseBody = await response.Content.ReadAsStringAsync();
-            response.EnsureSuccessStatusCode();
+
+            Console.WriteLine($"[DBG][NTLM] Response status: {(int)response.StatusCode} {response.ReasonPhrase}");
+            Console.WriteLine("[DBG][NTLM] Response headers:");
+            foreach (KeyValuePair<string, IEnumerable<string>> header in response.Headers)
+            {
+                Console.WriteLine($"[DBG][NTLM]   {header.Key}: {string.Join(", ", header.Value)}");
+            }
+            foreach (KeyValuePair<string, IEnumerable<string>> header in response.Content.Headers)
+            {
+                Console.WriteLine($"[DBG][NTLM]   {header.Key}: {string.Join(", ", header.Value)}");
+            }
+            Console.WriteLine("[DBG][NTLM] Response body:");
+            Console.WriteLine(responseBody);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                string wwwAuthenticate = response.Headers.WwwAuthenticate.Count > 0
+                    ? string.Join(", ", response.Headers.WwwAuthenticate)
+                    : "(none)";
+                string error = $"HTTP {(int)response.StatusCode} {response.ReasonPhrase}. " +
+                               $"WWW-Authenticate: {wwwAuthenticate}. Body: {responseBody}";
+                Console.WriteLine("[ERR][NTLM] Callback failed: " + error);
+                trashInspection.ErrorFromCallBack = error;
+                await trashInspection.Update(_dbContext);
+                return;
+            }
 
             string returnValue = XDocument.Parse(responseBody).Descendants()
                 .FirstOrDefault(x => x.Name.LocalName == "return_value")?.Value;
 
-            Console.WriteLine("[DBG] Result is " + returnValue);
+            Console.WriteLine("[DBG][NTLM] Result is " + returnValue);
             trashInspection.SuccessMessageFromCallBack = returnValue;
             trashInspection.ResponseSendToCallBackUrl = true;
             await trashInspection.Update(_dbContext);
         }
         catch (Exception ex)
         {
-            Console.WriteLine("[ERR] We got the following error: " + ex.Message);
+            Console.WriteLine("[ERR][NTLM] Exception during callback: " + ex);
+            for (Exception inner = ex.InnerException; inner != null; inner = inner.InnerException)
+            {
+                Console.WriteLine("[ERR][NTLM] Inner exception: " + inner);
+            }
             trashInspection.ErrorFromCallBack = ex.Message;
             await trashInspection.Update(_dbContext);
+        }
+    }
+
+    // Streams the low-level HTTP and NTLM/SSPI negotiation from the System.Net.Http and
+    // System.Net.Security EventSources (including their internal-diagnostics variants) to the console
+    // while active. Diagnostic aid for the NTLM callback 401; scope its lifetime with `using`.
+    private sealed class NetworkDiagnosticsListener : EventListener
+    {
+        private static readonly HashSet<string> Sources = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "System.Net.Http",
+            "System.Net.Security",
+            "Private.InternalDiagnostics.System.Net.Http",
+            "Private.InternalDiagnostics.System.Net.Security"
+        };
+
+        protected override void OnEventSourceCreated(EventSource eventSource)
+        {
+            if (Sources.Contains(eventSource.Name))
+            {
+                EnableEvents(eventSource, EventLevel.Verbose, EventKeywords.All);
+            }
+        }
+
+        protected override void OnEventWritten(EventWrittenEventArgs eventData)
+        {
+            try
+            {
+                List<string> parts = new List<string>();
+                if (eventData.Payload != null)
+                {
+                    for (int i = 0; i < eventData.Payload.Count; i++)
+                    {
+                        string name = eventData.PayloadNames != null && i < eventData.PayloadNames.Count
+                            ? eventData.PayloadNames[i]
+                            : "arg" + i;
+                        parts.Add($"{name}={eventData.Payload[i]}");
+                    }
+                }
+
+                Console.WriteLine($"[NET][{eventData.EventSource.Name}] {eventData.EventName} {string.Join(" ", parts)}");
+            }
+            catch
+            {
+                // Never let diagnostics logging break the callback.
+            }
         }
     }
 }
